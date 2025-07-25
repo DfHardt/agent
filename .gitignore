@@ -6,3 +6,8 @@ embedder.ipybn
 aux files/
 resources/
 pdfs/
+poppler/
+rag_resources/
+embedder
+image.png
+__pycache__

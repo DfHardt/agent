@@ -4,6 +4,7 @@ import os
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_groq import ChatGroq
 
 import rich
@@ -11,6 +12,7 @@ from rich.console import Console
 
 import tools as my_tools
 from state import State
+import config
 
 load_dotenv()
 api_key = os.getenv('GROQ_API_KEY')
@@ -18,7 +20,7 @@ console = Console()
 
 #. Nodes
 
-llm = ChatGroq(model = "llama-3.3-70b-versatile").bind_tools(tools = my_tools.tools)
+llm = ChatGroq(model = "llama-3.3-70b-versatile").bind_tools(tools = my_tools.tools, tool_choice = "auto")
 
 def chatbot(State: State):
     try:
@@ -90,8 +92,8 @@ def ApplicationLoop():
             break
 
         prompt = {"messages": [
-                {"role": "system", "content": "Responda sempre em português do Brasil."},
-                {"role": "user", "content": user_input}
+                SystemMessage(content = config.system_prompt, id = 'sys_prompt'),
+                HumanMessage(content = user_input)
             ]}
 
         result = graph.invoke(prompt, config = {'configurable': {'thread_id': '1'}})

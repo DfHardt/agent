@@ -1,143 +1,257 @@
 import os
-import numpy as np
+import pickle
+from typing import List, Optional
+from pathlib import Path
+import re
+import unicodedata
+from uuid import uuid4
+import tqdm
+import time
 
-import faiss
-import pandas as pd
+import pytesseract
+from pdf2image import convert_from_path
 
-from langchain_community.vectorstores import FAISS
-from langchain.tools import tool
-from langchain.schema import Document
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.vectorstores import InMemoryVectorStore
-from langchain.tools.retriever import create_retriever_tool
+from langchain_community.document_loaders import PyPDFLoader, UnstructuredWordDocumentLoader, TextLoader
 from langchain_ollama import OllamaEmbeddings
-from langchain_core.vectorstores import VectorStoreRetriever
-from langchain_groq import ChatGroq
+from langchain_community.vectorstores import FAISS
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+from langchain_core.messages import SystemMessage
 
-embedding_model = 'granite-embedding'
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 
-#__ RAG
-"""
-class PDFRetriever:
-    def __init__(self, file_path: str, embedding_model: str = embedding_model):
-        self.file_path = file_path
-        self.embedding_model = embedding_model
-        self.pdf_list = [file for file in os.listdir(file_path)
-                         if os.path.isfile(os.path.join(file_path, file))
-                         and file.endswith('.pdf')]
+from pinecone import Pinecone, ServerlessSpec
 
-    def load(self):
-        docs = [PyPDFLoader(os.path.join(self.file_path, pdf)).load() for pdf in self.pdf_list]
-        return [doc for sublist in docs for doc in sublist] 
-    
-    def split(self, documents):
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            chunk_size = 500, chunk_overlap = 100
+import tools as my_tools
+from state import State
+import config
+
+console = Console()
+embedder = config.embedder
+llm_router = config.llm_router
+
+pc = Pinecone(api_key=os.getenv('pinecone_api_key'))
+index = pc.Index("celso-db")
+
+def sanitize_filename(name: str) -> str:
+    name = name.rsplit('.', 1)[0]
+    name = unicodedata.normalize('NFKD', name).encode('ASCII', 'ignore').decode('utf-8')
+    name = name.replace(' ', '_')
+    name = re.sub(r'[^\w\-]', '_', name)
+    return name
+
+def create_vectorstores(unify: bool = False, embedder = embedder, ignore: list | None = []):
+    '''
+    Vetoriza os documentos
+    '''
+    base_path = os.path.join('rag_resources', 'files_db')
+    files = [f for f in os.listdir(base_path) if os.path.isfile(os.path.join(base_path, f))]
+    if ignore:
+        files = list(set(files) - set(ignore))
+
+    with Progress() as progress:
+        task_txt = "[green]Processando arquivos..."
+        if unify:
+            task_txt = "[green]Carregando arquivos..."
+        task = progress.add_task(task_txt, total=len(files))
+
+        documents = []
+        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+
+        for file in files:
+            full_path = os.path.join(base_path, file)
+
+            if file.endswith('.pdf'):
+                loader = PyPDFLoader(full_path)
+                document = loader.load()
+            elif file.endswith('.docx'):
+                loader = UnstructuredWordDocumentLoader(full_path)
+                document = loader.load()
+            elif file.endswith('.txt'):
+                loader = TextLoader(full_path, encoding="UTF-8")
+                document = loader.load()
+            else:
+                print(f'Extensão não suportada: {file}')
+                progress.advance(task)
+                continue
+
+            if not unify:
+                chunks = splitter.split_documents(document)
+                vectorstore = FAISS.from_documents(chunks, embedder)
+
+                sanitized_filename = sanitize_filename(file)
+                output_path = os.path.join('rag_resources', 'vector_db', sanitized_filename)
+                vectorstore.save_local(output_path)
+            else:
+                documents.extend(document)
+
+            progress.advance(task)
+
+        if unify:
+            documents = splitter.split_documents(documents)
+            vectorstore = FAISS.from_documents(documents, embedder)
+            dst = os.path.join('rag_resources', 'main_vector_db', 'main_db')
+            vectorstore.save_local(dst)
+            
+#create_vectorstores(unify = True, ignore = ['Celso_EP_Zapier 2.docx'])
+
+def main_vectorstore_db(embedder = embedder):
+
+    base_path = os.path.join('rag_resources', 'files_db')
+    files = [f for f in os.listdir(base_path) if os.path.isfile(os.path.join(base_path, f))]
+
+    for file in files:
+            full_path = os.path.join(base_path, file)
+
+            if file.endswith('.pdf'):
+                loader = PyPDFLoader(full_path)
+                document = loader.load()
+            elif file.endswith('.docx'):
+                loader = UnstructuredWordDocumentLoader(full_path)
+                document = loader.load()
+            elif file.endswith('.txt'):
+                loader = TextLoader(full_path, encoding="UTF-8")
+                document = loader.load()
+            else:
+                print(f'Extensão não suportada: {file}; atualize o código.')
+
+poppler_path = r"C:\Users\danie\Daniel\faculdade\nias\celso\poppler\poppler-24.08.0\Library\bin"
+
+def digitalize_pdf(src: str, dst: str, poppler: str = poppler_path):
+    # Caminho para o seu arquivo PDF
+    pdf_path = src
+
+    # ---- PASSO 1: Converter o PDF em uma lista de imagens ----
+    # A função convert_from_path() lê seu PDF e cria uma imagem para cada página.
+    pages_as_images = convert_from_path(pdf_path, poppler_path=poppler)
+
+    # String vazia para armazenar todo o texto do PDF
+    full_text = ""
+
+    # ---- PASSO 2: Iterar sobre cada imagem e aplicar o OCR ----
+    print("Iniciando a transcrição do PDF...")
+    for image in pages_as_images:
+        # pytesseract.image_to_string() "lê" a imagem e extrai o texto.
+        text = pytesseract.image_to_string(image, lang='por')
+        full_text += text + "\n" # Adiciona o texto da página ao texto completo
+
+    print("Transcrição finalizada!")
+    # --- SALVANDO O ARQUIVO ---
+    # Abre o arquivo de saída no modo de escrita ('w') com codificação UTF-8
+    with open(dst, 'w', encoding='utf-8') as file:
+        file.write(full_text) # Escreve todo o texto extraído no arquivo
+
+    print(f"Transcrição finalizada com sucesso!")
+    print(f"O texto foi salvo em: {dst}")
+
+def pinecone_index(index_name: str) -> None:
+    index_name = index_name
+
+    if not pc.has_index(index_name):
+        pc.create_index_for_model(
+            name=index_name,
+            cloud="aws",
+            region="us-east-1",
+            embed={
+                "model":"llama-text-embed-v2",
+                "field_map":{"text": "chunk_text"}
+            }
         )
 
-        return text_splitter.split_documents(documents)
+#pinecone_index('celso-db')
+
+class ParagraphSplitter:
+    def split_documents(self, docs):
+        results = []
+        for doc in docs:
+            for paragraph in doc.page_content.split('\n\n'):
+                if paragraph.strip():
+                    results.append(Document(page_content=paragraph, metadata=doc.metadata))
+        return results
     
-    def retriever(self, pdf_name: str = None):
-        '''
-        Cria e retorna um retriever vetorizado para um PDF específico.
+# Inicializa Pinecone
+def upload_single_file_to_index(file_name: str, index: str = index) -> None:    
 
-        Args:
-            pdf_name (str): Nome do arquivo PDF a ser carregado e vetorizar.
+    # Carrega o documento
+    if file_name.endswith('.pdf'):
+        loader = PyPDFLoader(file_name)
+    elif file_name.endswith('.docx'):
+        loader = UnstructuredWordDocumentLoader(file_name)
 
-        Returns:
-            BaseRetriever: objeto retriever para busca vetorizada no conteúdo do PDF.
-        '''
+    documents = loader.load()
+
+    # Divide em parágrafos
+    splitter = ParagraphSplitter()
+    chunks = splitter.split_documents(documents)
+
+    # Upsert no Pinecone (embedding automático)
+    items = [
+        {
+        "id": str(uuid4()),
+            "metadata": {
+            "chunk_text": chunk.page_content
+            }
+        }
+        for chunk in chunks
+    ]
+
+    index.upsert(items)
+
+
+def upload_dir_to_index(path: str, index: str = index, exclude: list | None = None) -> None:
+
+    file_list = list(set(os.listdir(path)) - set(exclude or []))
+    
+    for file_name in tqdm.tqdm(file_list):
+        full_path = os.path.join(path, file_name)
+
+        if file_name.endswith('.pdf'):
+            loader = PyPDFLoader(full_path)
+        elif file_name.endswith('.docx'):
+            loader = UnstructuredWordDocumentLoader(full_path)
+        elif file_name.endswith('.txt'):
+            loader = TextLoader(full_path, encoding="UTF-8")
+        else:
+            continue
+
+        documents = loader.load()
+
+        splitter = ParagraphSplitter()
+        chunks = splitter.split_documents(documents)
+
+        items = [
+            {
+                "id": str(uuid4()),
+                "chunk_text": chunk.page_content
+            }
+            for chunk in chunks
+        ]
+
         try:
-            if pdf_name:
-                docs = PyPDFLoader(os.path.join(self.file_path, pdf_name)).load()
-                splitted = self.split(docs)
-                vector_store = InMemoryVectorStore.from_documents(
-                    documents=splitted,
-                    embedding=OllamaEmbeddings(model=self.embedding_model)
-                )
-                return vector_store.as_retriever()
+            for i in range(0, len(items), 96):
+                index.upsert_records(
+                    namespace = 'unified-db',
+                    records = items[i:i+96])
+        except Exception as err:
+            print(err, '\n\nSleeping for 61.0 seconds')
+            time.sleep(61.0)
 
-            vector_store = InMemoryVectorStore.from_documents(
-                documents = self.split(self.load()),
-                embedding = OllamaEmbeddings(model=embedding_model)
-            )
-            return vector_store.as_retriever()
-        except:
-            vector_store = InMemoryVectorStore.from_documents(
-                documents = self.split(self.load()),
-                embedding = OllamaEmbeddings(model=embedding_model)
-            )
-            return vector_store.as_retriever()
+#upload_dir_to_index(path = r'rag_resources\files_db', exclude = ['.~lock.Celso_EP_Zapier 2.docx#', 'Celso_EP_Zapier 2.docx',])
 
-pdf_retriever = PDFRetriever(file_path = 'pdfs', embedding_model = embedding_model)
-pdf_retriever = create_retriever_tool(
-    pdf_retriever.retriever(),
-    'retrieve_pdf_content',
-    f'''
-    Busca e retorna informações a partir de PDFs.
-    Você tem acesso aos seguintes documentos: {[file for file in os.listdir('pdfs') if file.endswith('.pdf')]}.
-    Você deve utilizar essa ferramenta quando for perguntado sobre algum assunto abordado por esses documentos.
-    Args:
-    pdf_name (str): Nome do pdf a ser consultado.
-    '''
-)"""
+def pinecone_retriever(query: str): 
 
-class PDFRetriever:
-    def __init__(self, file_path: str, embedding_model: str = embedding_model):
-        self.file_path = file_path
-        self.embedding_model = embedding_model
-        self.pdf_list = [file for file in os.listdir(file_path)
-                         if os.path.isfile(os.path.join(file_path, file))
-                         and file.endswith('.pdf')]
+    output = '\n\n'
 
-    def load(self):
-        docs = [PyPDFLoader(os.path.join(self.file_path, pdf)).load() for pdf in self.pdf_list]
-        return [doc for sublist in docs for doc in sublist] 
-    
-    def split(self, documents):
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            chunk_size = 500, chunk_overlap = 100
-        )
+    results = index.search(
+        namespace='unified-db',
+        query={
+            'inputs': {'text': query},
+            'top_k': 1
+        }
+    )
 
-        return text_splitter.split_documents(documents)
-    
-    def retriever(self, file_name: str = None):
-        '''
-        Cria e retorna um retriever vetorizado para um PDF específico.
+    for chunk in results['result']['hits'][0]['fields']['chunk_text']:
+        output += chunk
 
-        Args:
-            file_name (str): Nome do arquivo vetorizado a ser carregado.
-
-        Returns:
-            BaseRetriever: objeto retriever para busca vetorizada no conteúdo do PDF.
-        '''
-        if file_name:
-            vectorstore = FAISS.load_local(os.path.join(r'embed_text', file_name), embeddings=embedding_model)
-            return vectorstore.as_retriever()
-        print('file_name=none')
-    
-pdf_retriever = PDFRetriever(file_path = 'pdfs', embedding_model = embedding_model)
-
-
-desc = f'''
-    Busca e retorna informações a partir de PDFs vetorizados.
-    Você tem acesso aos seguintes documentos: {[file for file in os.listdir('embed_text') if file.endswith('.npy')]}.
-    Você deve utilizar essa ferramenta quando for perguntado sobre algum assunto abordado por esses documentos.
-    Args:
-    file_name (str): Nome do arquivo a ser consultado.
-    query (str): Solicitação do usuário.
-    '''
-@tool(description=desc)
-def retrieve_pdf_content(file_name: str, query: str):
-    retriever = pdf_retriever.retriever(file_name)
-    if retriever is None:
-        return "Arquivo não encontrado ou file_name não especificado."
-    docs = retriever.get_relevant_documents(query)
-    return [d.page_content for d in docs]
-
-@tool(description = desc)
-def retrieve_from_loaded(file_name: str, query: str):
-    db = FAISS.load_local(os.path.join('embed_text', file_name))
-    retriever = VectorStoreRetriever(vectorstore=db)
-    llm = llm = ChatGroq(model = "llama-3.3-70b-versatile")
+    return output
