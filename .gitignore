@@ -2,12 +2,12 @@
 log.txt
 obs.md
 aux.py
-embedder.ipybn
+embedder.ipynb
 aux files/
 resources/
 pdfs/
 poppler/
 rag_resources/
-embedder
+embedder.py
 image.png
 __pycache__
