@@ -1,6 +1,10 @@
-import json, os, math, inspect, requests, random, dotenv, re
+import json, os, math, inspect, requests, random, dotenv, re, datetime
+import smtplib
+from email.message import EmailMessage
+from uuid import uuid4
+import streamlit as st
 
-from typing import Callable
+from typing import Callable, Annotated, Any
 
 from langchain.agents import Tool
 from langchain.tools import tool
@@ -10,10 +14,17 @@ from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.messages import SystemMessage, AIMessage, ToolMessage, FunctionMessage, BaseMessage, AnyMessage
+from langgraph_swarm import create_handoff_tool, create_swarm
+from langgraph_swarm.handoff import _get_field
+from typing import Annotated
+from langchain_core.tools import InjectedToolCallId
+from langgraph.types import Command
+from langgraph.prebuilt import InjectedState
+
 
 from state import State
 import rag
-import config
+import config as cfg
 
 dotenv.load_dotenv()
 
@@ -67,8 +78,7 @@ def route_tools(State: State):
         return "tools"
     return 'no tool_call'
 
-#__ RAG
-
+#_ RAG
 @tool
 def retriever(query: str):
     '''
@@ -105,6 +115,133 @@ def pinecone_retriever(query: str):
     '''
 
     return rag.pinecone_retriever(query) + '\n\n'
+
+#_ Captura de dados
+
+stored_infos = cfg.stored_info
+
+@tool(description=cfg.ToolDocstrings.storage_tool)
+def storage_tool(
+    state: Annotated[Any, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    nome_completo: str | None = None,
+    numero_matricula: str | int | None = None,
+    unidade: str | None = None,
+    modo: str | None = None,
+):
+
+    info = {
+        "nome_completo": nome_completo,
+        "numero_matricula": numero_matricula,
+        "unidade": unidade,
+        "modo": modo
+    }
+
+    # Armazena os dados (sua lógica)
+    stored_infos.store_user_data(info=info)
+    
+    # Cria manualmente o ToolMessage (como fazia antes no tool node)
+    return 'Informação registrada com sucesso'
+
+
+#captura os dados da conversa
+def register_chat_info(
+pergunta: str | None = None,
+resposta: str | None = None,
+feedback: str | None = None,
+):
+
+    chat_data = {
+        'pergunta': pergunta,
+        'resposta': resposta,
+        'feedback': feedback,
+    }
+    stored_infos.build_email(email_body = chat_data)
+    
+    return 'Informação registrada com sucesso'
+register_chat_info.__doc__ = cfg.ToolDocstrings.register_chat_info
+
+def get_user_data():
+    return stored_infos.get_user_data()
+get_user_data.__doc__ = cfg.ToolDocstrings.get_user_data
+
+def send_email():
+    msg = EmailMessage()
+    msg['Subject'] = 'Registro de Interação - Monitor História Econômica II'
+    msg['From'] = 'Celso Bot'
+    msg['To'] = 'dfghardt@gmail.com'
+
+    registered_info = stored_infos.email_content
+
+    msg.set_content(
+f'''
+Nome: {registered_info['user_data']['nome_completo']};
+Matrícula: {registered_info['user_data']['numero_matricula']};
+Unidade temática: {registered_info['user_data']['unidade']};
+Pergunta orientadora: {registered_info['pergunta']};
+Resposta do estudante: 
+
+{registered_info['resposta']}
+
+Feedback do monitor: {registered_info['feedback']};
+Data: {registered_info['data']};
+'''
+    )
+
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login('dfghardt@gmail.com', cfg.gmail_pwd)
+        smtp.send_message(msg)
+send_email.__doc__ = cfg.ToolDocstrings.send_email
+
+def mode_3_retriever(query: str):
+    output = '\n\n'
+    results = index.search(
+        namespace='Plano_de_Ensino_Historia_Economica_II_UFV',
+        query={
+            'inputs': {'text': query},
+            'top_k': 3
+        }
+    )
+
+    for chunk in results['result']['hits'][0]['fields']['chunk_text']:
+        output += chunk
+
+    return output
+mode_3_retriever.__doc__ = cfg.ToolDocstrings.mode_3_retriever
+
+#_ Handoff Tools
+
+transfer_to_data_collector = create_handoff_tool(
+    agent_name="data_collector",
+    description="Use para o primeiro contato com o estudante. Este assistente é responsável por coletar os dados iniciais obrigatórios: nome completo, número de matrícula e a Unidade Temática de interesse."
+)
+
+# Agente 1: Modo Dissertativo (Registrado)
+transfer_to_corretor_de_ensaios = create_handoff_tool(
+    agent_name="corretor_de_ensaios",
+    description="Use quando o estudante escolher a interação dissertativa (Modo 1). Este assistente propõe uma pergunta crítica, analisa a resposta do estudante, fornece feedback formativo e, ao final, registra a interação completa para envio.",
+    name="transfer_to_corretor_de_ensaios"
+)
+
+# Agente 2: Dúvidas e Exercícios (Não Registrado)
+transfer_to_responder_duvidas = create_handoff_tool(
+    agent_name="responder_duvidas",
+    description="Use quando o estudante quiser esclarecer dúvidas conceituais sobre a matéria ou solicitar exercícios (Modo 2). As interações neste modo não são registradas.",
+    name="transfer_to_responder_duvidas"
+)
+
+# Agente 3: Dúvidas sobre o Plano de Ensino (Não Registrado)
+transfer_to_agente_plano_de_ensino = create_handoff_tool(
+    agent_name="agente_plano_de_ensino",
+    description="Use exclusivamente quando o estudante tiver dúvidas sobre o plano de ensino (Modo 3), como datas das aulas, textos base e cronograma. As interações neste modo não são registradas.",
+    name="transfer_to_agente_plano_de_ensino"
+)
+
+transfer_to_email_sender = create_handoff_tool(
+    agent_name="email_sender",
+    description="Use apenas depois de enviar o feedback da redação ao estudante e depois da confirmação do mesmo, ferramenta para transferir ao agente responsável pelo envio do email",
+    name="transfer_to_email_sender"
+)
 
 tools = [
     pinecone_retriever

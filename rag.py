@@ -29,7 +29,6 @@ import config
 
 console = Console()
 embedder = config.embedder
-llm_router = config.llm_router
 
 pc = Pinecone(api_key=os.getenv('pinecone_api_key'))
 index = pc.Index("celso-db")
