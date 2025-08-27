@@ -1,4 +1,4 @@
-import json, os, dotenv,
+import json, os, dotenv
 import smtplib
 from email.message import EmailMessage
 

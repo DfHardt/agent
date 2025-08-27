@@ -2,6 +2,7 @@
 log.txt
 obs.md
 aux.py
+aux2.py
 embedder.ipynb
 aux files/
 resources/
@@ -13,8 +14,8 @@ image.png
 supervisor_graph.png
 supervisor.py
 swarm_architecture.py
-swarm_architecture.ipynb
-rag.pyaux2.py
+swarm-architecture.ipynb
+rag.py
 graph.png
 infos.txt
 image-1.png
