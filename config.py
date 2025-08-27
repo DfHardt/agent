@@ -7,13 +7,17 @@ api_key = os.getenv('GROQ_API_KEY')
 gmail_pwd = os.getenv('gmail')
 
 from rich.console import Console
-from langchain_ollama import OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
+
+ollama = True
 
 console = Console()
 embedder = OllamaEmbeddings(model="granite-embedding")
 llm = ChatGroq(model = "llama-3.3-70b-versatile")
+if ollama:
+    llm = 
 
 class StoreChatInfo:
     def __init__(self):

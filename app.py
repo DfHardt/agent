@@ -4,7 +4,6 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Tool
 
 import main
 import config as cfg
-import tools as my_tools
 
 st.title("Celso")
 

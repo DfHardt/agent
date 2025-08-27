@@ -1,24 +1,16 @@
 from dotenv import load_dotenv
 import os
 
-from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
-from langchain_groq import ChatGroq
 from langgraph.prebuilt import create_react_agent
-from langgraph_swarm import create_handoff_tool, create_swarm
-
-from typing import Annotated, List
-from typing_extensions import TypedDict
-
-from langgraph.graph.message import add_messages
+from langgraph_swarm import create_swarm
 
 import rich
 from rich.console import Console
 
 import tools as my_tools
-from state import State
 import config as cfg
 
 load_dotenv()

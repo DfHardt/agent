@@ -10,4 +10,13 @@ poppler/
 rag_resources/
 embedder.py
 image.png
+supervisor_graph.png
+supervisor.py
+swarm_architecture.py
+swarm_architecture.ipynb
+rag.pyaux2.py
+graph.png
+infos.txt
+image-1.png
+image-2.png
 __pycache__
