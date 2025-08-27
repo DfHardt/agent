@@ -150,7 +150,7 @@ def supervisor_node(State: State):
     result = llm_router.invoke(State['messages'])
     return {'messages': [result]}
 
-#todo: função para contar o número de linhas e caracteres válidos; função para enviar o email;
+#todo: função para contar o número de linhas e caracteres válidos;
 #todo: reescrever o prompt qnd fizer a função do email
 def mode_1(State: State):
     set_role_prompt(State, content = config.mode_1_sys_prompt)

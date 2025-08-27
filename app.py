@@ -29,11 +29,14 @@ if prompt := st.chat_input("What is up?"):
         ]}
     
     
-    result = main.graph.invoke(prompt, config = {'configurable': {'thread_id': '1'}},)
+    result = main.graph.invoke(prompt, config = {'configurable': {'thread_id': '1'}})
     new_messages = result["messages"]
     prompt['messages'].extend(new_messages)
 
     last_message = [m.content for m in new_messages if isinstance(m, AIMessage)][-1]
+
+    main.store_feedback(last_message)
+
     with st.chat_message("assistant"):
         response = st.markdown(last_message)
         st.session_state.messages.append({"role": "assistant", "content": last_message})

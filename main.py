@@ -33,13 +33,14 @@ data_collector_model = cfg.llm.bind_tools(
     tools = data_collector_tools,
     parallel_tool_calls = False
 )
-mode_1_tools = [my_tools.storage_tool, my_tools.register_chat_info, my_tools.transfer_to_data_collector, my_tools.transfer_to_responder_duvidas, my_tools.transfer_to_agente_plano_de_ensino, my_tools.transfer_to_email_sender]
+
+mode_1_tools = [my_tools.mode_1_retriever, my_tools.storage_tool, my_tools.register_chat_info, my_tools.transfer_to_data_collector, my_tools.transfer_to_responder_duvidas, my_tools.transfer_to_agente_plano_de_ensino, my_tools.transfer_to_email_sender]
 mode_1_model = cfg.llm.bind_tools(
     tools=mode_1_tools,
     parallel_tool_calls=False
 )
 
-mode_2_tools = [my_tools.transfer_to_data_collector, my_tools.transfer_to_corretor_de_ensaios, my_tools.transfer_to_agente_plano_de_ensino]
+mode_2_tools = [my_tools.transfer_to_data_collector, my_tools.transfer_to_corretor_de_ensaios, my_tools.transfer_to_agente_plano_de_ensino, my_tools.mode_2_retriever]
 mode_2_model = cfg.llm.bind_tools(
     tools=mode_2_tools,
     parallel_tool_calls=False
@@ -51,7 +52,7 @@ mode_3_model = cfg.llm.bind_tools(
     parallel_tool_calls=False
 )
 
-email_sender_tools = [my_tools.get_user_data, my_tools.storage_tool, my_tools.transfer_to_corretor_de_ensaios, my_tools.transfer_to_responder_duvidas, my_tools.transfer_to_agente_plano_de_ensino, my_tools.send_email]
+email_sender_tools = [my_tools.is_data_missing, my_tools.storage_tool, my_tools.transfer_to_corretor_de_ensaios, my_tools.transfer_to_responder_duvidas, my_tools.transfer_to_agente_plano_de_ensino, my_tools.send_email]
 email_sender_model = cfg.llm.bind_tools(
     tools=email_sender_tools,
     parallel_tool_calls=False
@@ -108,6 +109,10 @@ png_bytes = graph.get_graph().draw_mermaid_png()
 with open("graph.png", "wb") as f:
     f.write(png_bytes)
 
+def store_feedback(ai_message: str) -> None:
+    if "correção" in [msg.rstrip(":").lower() for msg in ai_message.split(" ")]:
+        cfg.stored_info.email_content["feedback"] = ai_message
+
 def ApplicationLoop():
     while True:
         user_input = console.input("[bold magenta]User: [/]")
@@ -123,5 +128,7 @@ def ApplicationLoop():
 
         result = graph.invoke(prompt, config = {'configurable': {'thread_id': '1'}})
         last_message = result["messages"][-1]
+
+        store_feedback(last_message.content)
 
         console.print(f"[bold green3]Assistant:[/] [grey78]{last_message.content}[/]")

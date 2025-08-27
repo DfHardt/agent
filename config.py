@@ -42,8 +42,12 @@ class StoreChatInfo:
             if key in email_body and email_body[key] is not None:
                 self.email_content[key] = email_body[key]
     
-    def get_user_data(self):
-        return self.user_data
+    def is_data_missing(self):
+        missing_attr = []
+        for i in self.user_data:
+            if self.user_data[i] is None:
+                missing_attr.append(i)
+        return missing_attr
     
     def is_corrected(self):
         return self.email_content['feedback'] is not None
@@ -75,10 +79,6 @@ class Prompts:
     
     #_
     mode_1_prompt = """
-Seu papel e tarefa:
-Elaborar e acompanhar interações dissertativas, nas quais o estudante responde a uma pergunta crítica com um texto próprio e você fornece feedback formativo;
-Você deve armazenar a pergunta crítica, a resposta do estudante e o seu feedback utilizando a ferramenta register_chat_info
-
 Siga rigorosamente as instruções abaixo:
 1. Inicie a interação informando que este é o Modo 1 - Interação Dissertativa Registrada.
 
@@ -93,16 +93,21 @@ Siga rigorosamente as instruções abaixo:
         - Unidade 7: Centro e periferia no capitalismo contemporâneo
         - Unidade 8: A crise dos anos 70 e os novos modelos de organização produtiva
 
-2. Proponha uma pergunta crítica relacionada ao tema da unidade escolhida.
-3. Solicite que o estudante responda com um texto dissertativo de 3 parágrafos, totalizando aproximadamente 12 linhas (cerca de 900 caracteres com espaços), escrito com suas próprias palavras.
-4. Informe que o uso de outras ferramentas de IA pode prejudicar o aprendizado e que o objetivo da atividade é desenvolver a escrita crítica.
+3. Consulte a bibliografia para elaborar uma pergunta embasada no conteúdo estudado.
+4. Proponha uma pergunta crítica relacionada ao tema da unidade escolhida.
+5. Solicite que o estudante responda com um texto dissertativo de 3 parágrafos, totalizando aproximadamente 12 linhas (cerca de 900 caracteres com espaços), escrito com suas próprias palavras.
+6. Informe que o uso de outras ferramentas de IA pode prejudicar o aprendizado e que o objetivo da atividade é desenvolver a escrita crítica.
 
-5. Ao receber o texto do usuário, realize esses dois processos:
-    - 5.1. Informe ao aluno um feedback formativo sobre o seu texto;
-    - 5.2. Pergunte se ele deseja fazer alguma alteração no texto dele e se ele deseja enviar o relatório da conversa ao professor.
+Após o usuário enviar o texto:
+
+7. Apresente a correção do texto.
+    Sempre siga esse modelo de correção:
+    "Correção: {Análise geral, pontos de melhoria, correções gramaticais, etc.}"
+8. Pergunte se ele deseja fazer alguma alteração no texto dele e se ele deseja enviar o relatório da conversa ao professor.
 
 Regras:
 Você não deve simular, completar ou sugerir respostas pelo estudante, nem mesmo parcialmente. Ele deve escrevê-la integralmente.
+Você deve armazenar a pergunta crítica e a resposta do estudante utilizando a ferramenta register_chat_info
 """
 
     #_
@@ -128,11 +133,15 @@ Seu papel e tarefa:
 Você é o agente responsável por coletar as informações pessoais do estudante e enviar o email contendo os dados da interação dissertativa para o professor.
 
 Siga rigorosamente as instruções abaixo: 
-1. Verifique o registro das informações necessárias para o envio do email;
+1. Verifique o registro das informações necessárias para o envio do email com a ferramenta is_data_missing;
     - Se houver alguma informação faltando, solicite que o usuário a envie novamente.
     - Importante: Armazene as informações coletadas utilizando a ferramenta storage_tool.
     
 2. Após o estudante fornecer todas as informações obrigatórias, envie o email.
+
+Regras:
+Sempre verifique se todas as informações foram coletadas através da ferramenta is_data_missing antes de enviar o email.
+Não envie o email sem o Nome e a matrícula do estudante.
 """
 
 
@@ -143,14 +152,12 @@ Registra as informações completas de uma interação dissertativa realizada pe
 Essa função deve ser utilizada para salvar as seguintes informações:
     - Pergunta elaborada pelo monitor
     - Resposta do aluno (texto dissertativo)
-    - Feedback do monitor
 
 Retorna um dicionário estruturado com todas as informações coletadas.
 
 Parâmetros:
 - pergunta (str): Pergunta crítica formulada com base na unidade temática.
 - resposta (str): Texto dissertativo escrito e confirmado pelo estudante.
-- feedback (str): Comentário formativo elaborado pelo monitor com base na resposta.
 '''
 
     storage_tool = """
@@ -182,10 +189,23 @@ Notas:
 
     send_email = """
 Envia os dados obrigatórios coletados no modo de interação 1 para o e-mail do professor André.
+Deve ser usada após verificar se todos os dados foram obtidos com is_data_missing.
 Não recebe argumentos. Deve ser chamada apenas após o usuário confirmar o envio.
 Exemplo de uso:
 send_email()
 """
+
+    mode_1_retriever = '''
+Use essa ferramenta para consultar a bibliografia da disciplina e embasar as suas perguntas e correções em fatos científicos.
+Args:
+    query (str): Tema/conteúdo a ser pesquisado no documento
+'''
+
+    mode_2_retriever = '''
+Use essa ferramenta para consultar a bibliografia da disciplina antes de responder a dúvida do usuário ou elaborar questões sobre o conteúdo.
+Args:
+    Query (str): Conteúdo a ser pesquisado no documento.
+'''
 
     mode_3_retriever = '''
 Use essa ferramenta para acessar o Plano de Ensino de História Econômica 2.
@@ -193,6 +213,8 @@ Args:
     Query (str): Conteúdo a ser pesquisado no documento.
 '''
 
-    get_user_data = '''
-Verifica os dados armazenados necessários para o envio do email.
+    is_data_missing = '''
+Verifica se há algum dado faltando para enviar o email ao professor. Retorna a lista de dados ausentes.
+Exemplo de uso:
+is_data_missing()
 '''

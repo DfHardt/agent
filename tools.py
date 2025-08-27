@@ -21,6 +21,7 @@ from langchain_core.tools import InjectedToolCallId
 from langgraph.types import Command
 from langgraph.prebuilt import InjectedState
 
+from pinecone import Pinecone
 
 from state import State
 import rag
@@ -31,6 +32,9 @@ dotenv.load_dotenv()
 tvly_api = os.getenv('tvly_api')
 os.environ["TAVILY_API_KEY"] = tvly_api
 openweather_api = os.getenv('openweather_api')
+
+pc = Pinecone(api_key=os.getenv('pinecone_api_key'))
+index = pc.Index("celso-db")
 
 
 #. Tool Node (Function to run the tools)
@@ -158,12 +162,14 @@ feedback: str | None = None,
     }
     stored_infos.build_email(email_body = chat_data)
     
-    return 'Informação registrada com sucesso'
+    return 'Informação registrada com sucesso, não esqueça de informar o feedback para o aluno'
 register_chat_info.__doc__ = cfg.ToolDocstrings.register_chat_info
 
-def get_user_data():
-    return stored_infos.get_user_data()
-get_user_data.__doc__ = cfg.ToolDocstrings.get_user_data
+def is_data_missing():
+    if stored_infos.is_data_missing() == []:
+        return "Nenhuma informação está faltando, pode prosseguir com o envio do email"
+    return stored_infos.is_data_missing()
+is_data_missing.__doc__ = cfg.ToolDocstrings.is_data_missing
 
 def send_email():
     msg = EmailMessage()
@@ -192,6 +198,38 @@ Data: {registered_info['data']};
         smtp.login('dfghardt@gmail.com', cfg.gmail_pwd)
         smtp.send_message(msg)
 send_email.__doc__ = cfg.ToolDocstrings.send_email
+
+def mode_1_retriever(query: str):
+    output = '\n\n'
+    results = index.search(
+        namespace="unified-db",
+        query = {
+            'inputs': {'text': query},
+            'top_k': 3
+        }
+    )
+
+    for chunk in results['result']['hits'][0]['fields']['chunk_text']:
+        output += chunk
+
+    return output
+mode_1_retriever.__doc__ = cfg.ToolDocstrings.mode_1_retriever
+
+def mode_2_retriever(query: str):
+    output = '\n\n'
+    results = index.search(
+        namespace="unified-db",
+        query = {
+            'inputs': {'text': query},
+            'top_k': 3
+        }
+    )
+
+    for chunk in results['result']['hits'][0]['fields']['chunk_text']:
+        output += chunk
+
+    return output
+mode_2_retriever.__doc__ = cfg.ToolDocstrings.mode_2_retriever
 
 def mode_3_retriever(query: str):
     output = '\n\n'
